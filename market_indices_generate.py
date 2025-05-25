@@ -2,6 +2,7 @@ from datetime import datetime
 import yfinance as yf
 from PIL import Image, ImageDraw, ImageFont
 import os
+import time
 
 # === 주요 지수 설정 ===
 indices = {
@@ -12,14 +13,49 @@ indices = {
     "^KQ11": "코스닥"
 }
 
-# === 데이터 다운로드 (최근 거래일 기준 자동 탐색) ===
-data = yf.download(list(indices.keys()), period="5d", interval="1d", progress=False)["Close"]
+# === 데이터 다운로드 함수 (재시도 포함) ===
+def download_with_retry(tickers, max_retries=5):
+    wait_times = [5, 10, 20, 40, 60]
+    for attempt in range(max_retries):
+        try:
+            print(f"📡 데이터 다운로드 시도 {attempt + 1}/{max_retries}...")
+            data = yf.download(tickers, period="5d", interval="1d", progress=False)["Close"]
+            if data.dropna().empty:
+                raise ValueError("❌ 데이터가 없습니다. Rate Limit 또는 휴장일일 수 있습니다.")
+            return data
+        except Exception as e:
+            print(f"⚠️ 다운로드 실패: {e}")
+            if attempt < max_retries - 1:
+                print(f"⏳ {wait_times[attempt]}초 후 재시도...")
+                time.sleep(wait_times[attempt])
+            else:
+                print("❌ 최대 재시도 횟수 초과. 종료합니다.")
+                exit()
+
+# === 데이터 다운로드 ===
+data = download_with_retry(list(indices.keys()))
 last_valid_idx = data.dropna().index[-1]
 prev_valid_idx = data.dropna().index[-2]
-today_str = last_valid_idx.strftime("%Y-%m-%d")
 
-# === 데이터 포맷 구성 ===
-formatted = []
+# === 이미지 설정 (밝은 배경 + 연회색 박스) ===
+width = 500
+line_height = 36
+padding = 20
+height = padding * 2 + len(indices) * line_height
+img = Image.new("RGB", (width, height), color=(255, 255, 255))
+draw = ImageDraw.Draw(img)
+
+# 박스 배경
+box_x0, box_y0 = padding, padding
+box_x1, box_y1 = width - padding, height - padding
+draw.rounded_rectangle([box_x0, box_y0, box_x1, box_y1], radius=12, fill=(245, 245, 245), outline=(220, 220, 220))
+
+# 폰트 설정
+font_path = "C:/gitupload/ttf/D2Coding-Ver1.3.2-20180524.ttf"  # 윈도우용 경로
+font = ImageFont.truetype(font_path, 22)
+
+# 텍스트 출력
+y = box_y0 + 10
 for ticker, name in indices.items():
     try:
         current = data.loc[last_valid_idx, ticker]
@@ -27,32 +63,21 @@ for ticker, name in indices.items():
         diff = current - prev
         pct = diff / prev * 100
         arrow = "▲" if diff > 0 else "▼"
-        formatted.append(f"{name}: {current:,.2f} {arrow}{abs(pct):.2f}%")
+        color = (0, 128, 0) if diff > 0 else (200, 0, 0)
+        text = f"{name}: {current:,.2f} {arrow}{abs(pct):.2f}%"
+        draw.text((box_x0 + 15, y), text, font=font, fill=color)
     except:
-        formatted.append(f"{name}: 데이터 없음")
+        draw.text((box_x0 + 15, y), f"{name}: 데이터 없음", font=font, fill=(100, 100, 100))
+    y += line_height
 
-# === 이미지 생성 ===
-width, height = 480, 40 + len(formatted) * 32
-img = Image.new("RGB", (width, height), color=(20, 20, 20))
-draw = ImageDraw.Draw(img)
-
-font_path = "C:/keys/ttf/D2Coding-Ver1.3.2-20180524.ttf"  # 한글+고정폭 폰트
-font = ImageFont.truetype(font_path, 24)
-
-draw.text((10, 10), f"📊 주요 지수 요약 ({today_str})", font=font, fill=(255, 255, 255))
-y = 50
-for line in formatted:
-    draw.text((10, y), line, font=font, fill=(255, 255, 255))
-    y += 32
-
-# === 이미지 저장 ===
-output_path = "C:/keys/market_indices_darkmode.png"
+# 이미지 저장
+output_path = "C:/gitupload/market_indices_white_bg.png"
 img.save(output_path)
 print(f"✅ 이미지 저장 완료: {output_path}")
 
-# === GitHub 자동 업로드 ===
-os.chdir("C:/keys")  # Git 저장소 루트로 이동
-os.system("git add market_indices_darkmode.png")
-os.system("git commit -m \"자동 업데이트: 주요 지수 요약\"")
+# GitHub 자동 업로드
+os.chdir("C:/gitupload")
+os.system("git add market_indices_white_bg.png")
+os.system("git commit -m \"자동 업데이트: 밝은 배경 주요 지수 요약\"")
 os.system("git push origin main")
 print("✅ GitHub 업로드 완료")
